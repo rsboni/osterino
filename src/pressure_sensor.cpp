@@ -1,8 +1,8 @@
 // #include <ADS1X15.h>
-#include <Wire.h>
+// #include <Wire.h>
 #include "ADS1X15.h"
 // #include "i2c_bus_reset.h"
-#include "sensorState.h"
+#include "sensors_state.h"
 
 ADS1115 ADS(0x48);
 

@@ -1,25 +1,18 @@
-
 #include <max6675.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
-#include <BLEUtils.h>
 #include <BLE2902.h>
 #include "pressure_sensor.h"
-#include "sensorState.h"
 #include <SimpleKalmanFilter.h>
+#include "pindef.h"
+#include "sensors_state.h"
 
 BLEServer *pServer = NULL;
 bool isBrewing = false;
-int thermoDO = 19;
-int thermoCS = 23;
-int thermoCLK = 5;
-int RELAY_PIN = 2;
 int state = 0;
 String filterString;
 
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
-
-// BLECharacteristic *pCharacteristic;
 
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
@@ -60,38 +53,12 @@ class MyServerCallbacks : public BLEServerCallbacks
   {
     Serial.println("Connected was called");
     deviceConnected = true;
+    oldDeviceConnected = true;
   };
 
   void onDisconnect()
   {
     deviceConnected = false;
-  }
-
-  // void onWrite(BLERemoteCharacteristic* pBLERemoteCharacteristic, 
-  //                                         uint8_t* pData, size_t length, bool isNotify) {
-  //   //store temperature value
-  //   Serial.println((char*)pData);
-  //   // newTemperature = true;
-  // }
-
-  void onWrite(BLECharacteristic *pCharacteristic)
-  {
-    Serial.println("notifyed");
-    std::string rxValue = pCharacteristic->getValue();
-
-    filterString = rxValue.c_str(); // Convert to standard c string format
-    Serial.println(filterString);
-    if (filterString.substring(0, 1) == "t")
-    { // Check for header
-      if (filterString.substring(2) == "0")
-      {
-        state = 1;
-      }
-      else
-      {
-        state = 0;
-      }
-    }
   }
 };
 
@@ -138,10 +105,10 @@ static void sensorsReadPressure(void)
 void setup()
 {
   Serial.begin(115200);
+  Serial.println("Serial Begin");
 
-  // Create the BLE Device
-  BLEDevice::init("Osterino");
-
+  pinMode(brewPin, OUTPUT);
+  BLEDevice::init("Minibar");
   adsInit();
 
   // Create the BLE Server
@@ -215,7 +182,22 @@ void loop()
     dtostrf(currentState.smoothedPressure * 100, 1, 0, buffer1);
     pressureCharacteristic.setValue((char *)&buffer1);
     pressureCharacteristic.notify();
-
+    
+    uint8_t *received_data = brewingCharacteristic.getData();
+    if (received_data[0] == 1 && state == 0)
+    {
+      state = 1;
+      isBrewing = true;
+      Serial.println("Started brew");
+      digitalWrite(brewPin, state);
+    }
+    if (received_data[0] == 0 && state == 1)
+    {
+      state = 0;
+      isBrewing = false;
+      Serial.println("Stopped brew");
+      digitalWrite(brewPin, state);
+    }
     delay(200);
   }
 }
@@ -229,14 +211,4 @@ void BLETransfer(int16_t val)
 void getTemp()
 {
   temperature = thermocouple.readCelsius() + TEMPDIFF;
-
-  if (deviceConnected)
-  {
-    // Serial.println(state);
-    digitalWrite(RELAY_PIN, state);
-  }
-  else
-  {
-    digitalWrite(RELAY_PIN, 0);
-  }
 }
