@@ -3,14 +3,14 @@
 
 
 // ESP32 pins definitions
-#define thermoDO      19
-#define thermoCS      23
-#define thermoCLK     5
+#define thermoDO      19 //ok
+#define thermoCS      23 //ok
+#define thermoCLK     5  //ok
 
-#define zcPin         1
-#define brewPin       2
+#define zcPin         14 //ok
+#define brewPin       2  // to brew switch
 #define relayPin      3
-#define dimmerPin     4
+#define dimmerPin     12 //ok
 #define steamPin      6
 #define valvePin      5
 

@@ -1,7 +1,7 @@
 #include "pump.h"
 #include "pindef.h"
 #include <PSM.h>
-// #include "../utils.h"
+#include "utils.h"
 
 PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, 2, 4);
 
@@ -12,7 +12,7 @@ float pressureInefficiencyConstant4 =  0.0000832f;
 float pressureInefficiencyConstant5 = -0.00000466f;
 
 float flowPerClickAtZeroBar = 0.29f;
-short maxPumpClicksPerSecond = 50;
+short maxPumpClicksPerSecond = 60;
 
 // Initialising some pump specific specs, mainly:
 // - max pump clicks(dependant on region power grid spec)

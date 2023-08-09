@@ -6,6 +6,7 @@
 #include <SimpleKalmanFilter.h>
 #include "pindef.h"
 #include "sensors_state.h"
+#include "pump.h"
 
 BLEServer *pServer = NULL;
 bool isBrewing = false;
@@ -56,7 +57,7 @@ class MyServerCallbacks : public BLEServerCallbacks
     oldDeviceConnected = true;
   };
 
-  void onDisconnect()
+  void onDisconnect(BLEServer *pServer)
   {
     deviceConnected = false;
   }
@@ -108,9 +109,12 @@ void setup()
   Serial.println("Serial Begin");
 
   pinMode(brewPin, OUTPUT);
-  BLEDevice::init("Minibar");
+  // Pressure Sensor
   adsInit();
+  //pump;
+  pumpInit(60, 0.285f);
 
+  BLEDevice::init("Minibar");
   // Create the BLE Server
   BLEServer *pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
@@ -123,7 +127,6 @@ void setup()
   pEnviornment->addCharacteristic(&pressureCharacteristic);
   pEnviornment->addCharacteristic(&brewingCharacteristic);
 
-  // https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.descriptor.gatt.client_characteristic_configuration.xml
   // Create a BLE Descriptor
   temperatureCharacteristic.addDescriptor(new BLE2902());
   pressureCharacteristic.addDescriptor(new BLE2902());
@@ -182,7 +185,7 @@ void loop()
     dtostrf(currentState.smoothedPressure * 100, 1, 0, buffer1);
     pressureCharacteristic.setValue((char *)&buffer1);
     pressureCharacteristic.notify();
-    
+
     uint8_t *received_data = brewingCharacteristic.getData();
     if (received_data[0] == 1 && state == 0)
     {
@@ -190,6 +193,7 @@ void loop()
       isBrewing = true;
       Serial.println("Started brew");
       digitalWrite(brewPin, state);
+      setPumpToRawValue(100);
     }
     if (received_data[0] == 0 && state == 1)
     {
@@ -197,6 +201,7 @@ void loop()
       isBrewing = false;
       Serial.println("Stopped brew");
       digitalWrite(brewPin, state);
+      setPumpOff();
     }
     delay(200);
   }
@@ -212,3 +217,21 @@ void getTemp()
 {
   temperature = thermocouple.readCelsius() + TEMPDIFF;
 }
+
+// static void fillBoiler(float targetBoilerFullPressure) {
+//   static long elapsedTimeSinceStart = millis();
+//   lcdSetUpTime((millis() > elapsedTimeSinceStart) ? (int)((millis() - elapsedTimeSinceStart) / 1000) : 0);
+//   if (!startupInitFinished && lcdCurrentPageId == 0 && millis() - elapsedTimeSinceStart >= 3000) {
+//     unsigned long timePassed = millis() - elapsedTimeSinceStart;
+
+//     if (currentState.smoothedPressure < targetBoilerFullPressure && timePassed <= BOILER_FILL_TIMEOUT) {
+//       // lcdShowPopup("Filling boiler!");
+//       openValve();
+//       setPumpToRawValue(80);
+//     } else if (!startupInitFinished) {
+//       closeValve();
+//       setPumpToRawValue(0);
+//       startupInitFinished = true;
+//     }
+//   }
+// }
