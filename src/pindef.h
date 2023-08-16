@@ -7,12 +7,12 @@
 #define thermoCS      23 //ok
 #define thermoCLK     5  //ok
 
-#define zcPin         14 //ok
+#define zcPin         26 //ok
 #define brewPin       2  // to brew switch
 #define relayPin      3
-#define dimmerPin     12 //ok
+#define dimmerPin     27 //ok
 #define steamPin      6
-#define valvePin      5
+#define valvePin      17 //changed
 
 #define HX711_sck_1   7
 #define HX711_sck_2   8

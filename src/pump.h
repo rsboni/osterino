@@ -5,7 +5,7 @@
 #include "sensors_state.h"
 
 #define PUMP_RANGE 100
-#define ZC_MODE    RISING
+#define ZC_MODE    FALLING
 
 void pumpInit(int powerLineFrequency, float pumpFlowAtZero);
 void setPumpPressure(float targetPressure, float flowRestriction, SensorState &currentState);

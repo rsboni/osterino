@@ -3,14 +3,18 @@
 
 struct SensorState {
   float temperature;
+  bool deviceConnected;
+  bool isBrewing;
+  float targetPressure;
   float pressure;
   float smoothedPressure;
-  bool isPressureFalling;
-  bool isPressureFallingFast;
-  bool isPressureRising;
-  bool isPressureRisingFast;
-  bool isPumpFlowRisingFast;
-  bool isPumpFlowFallingFast;
+  float pressureChangeSpeed;
+  // bool isPressureFalling;
+  // bool isPressureFallingFast;
+  // bool isPressureRising;
+  // bool isPressureRisingFast;
+  // bool isPumpFlowRisingFast;
+  // bool isPumpFlowFallingFast;
   float pumpFlow;
   float smoothedPumpFlow;
   float liquidPumped;

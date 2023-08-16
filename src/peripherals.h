@@ -6,16 +6,13 @@
 #include <Arduino.h>
 
 static inline void pinInit(void) {
-  #if defined(LEGO_VALVE_RELAY)
-    pinMode(valvePin, OUTPUT_OPEN_DRAIN);
-  #else
-    pinMode(valvePin, OUTPUT);
-  #endif
-  pinMode(relayPin, OUTPUT);
-  pinMode(brewPin,  INPUT_PULLUP);
-  pinMode(steamPin, INPUT_PULLUP);
-  pinMode(HX711_dout_1, INPUT_PULLUP);
-  pinMode(HX711_dout_2, INPUT_PULLUP);
+
+  pinMode(valvePin, OUTPUT);
+  // pinMode(relayPin, OUTPUT);
+  // pinMode(brewPin,  INPUT_PULLUP);
+  // pinMode(steamPin, INPUT_PULLUP);
+  // pinMode(HX711_dout_1, INPUT_PULLUP);
+  // pinMode(HX711_dout_2, INPUT_PULLUP);
 }
 
 // Actuating the heater element
@@ -40,19 +37,13 @@ static inline bool steamState(void) {
 }
 
 static inline void openValve(void) {
-  #if defined LEGO_VALVE_RELAY
-    digitalWrite(valvePin, LOW);
-  #else
     digitalWrite(valvePin, HIGH);
-  #endif
+    Serial.println("Valve Opened");
 }
 
 static inline void closeValve(void) {
-  #if defined LEGO_VALVE_RELAY
-    digitalWrite(valvePin, HIGH);
-  #else
+    Serial.println("Valve Closing");
     digitalWrite(valvePin, LOW);
-  #endif
 }
 
 #endif

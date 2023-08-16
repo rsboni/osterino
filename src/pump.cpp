@@ -1,9 +1,9 @@
 #include "pump.h"
 #include "pindef.h"
-#include <PSM.h>
+#include "PSM.h" 
 #include "utils.h"
 
-PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, 2, 4);
+PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, 1, 6);
 
 float pressureInefficiencyConstant1 = -0.106f;
 float pressureInefficiencyConstant2 = -0.00785f;
@@ -13,6 +13,8 @@ float pressureInefficiencyConstant5 = -0.00000466f;
 
 float flowPerClickAtZeroBar = 0.29f;
 short maxPumpClicksPerSecond = 60;
+float fpc_multiplier = 1.2f;
+
 
 // Initialising some pump specific specs, mainly:
 // - max pump clicks(dependant on region power grid spec)
@@ -20,6 +22,9 @@ short maxPumpClicksPerSecond = 60;
 void pumpInit(int powerLineFrequency, float pumpFlowAtZero) {
     maxPumpClicksPerSecond = powerLineFrequency;
     flowPerClickAtZeroBar = pumpFlowAtZero;
+    fpc_multiplier = 60.f / (float)maxPumpClicksPerSecond;
+    pump.init(ZC_MODE);
+
 }
 
 // Function that returns the percentage of clicks the pump makes in it's current phase
@@ -40,8 +45,8 @@ float getPumpPct(float targetPressure, float flowRestriction, SensorState &curre
         return fminf(maxPumpPct, pumpPctToMaintainFlow * 0.95f + 0.1f + 0.2f * diff);
     }
 
-    if (diff <= 0.f && currentState.isPressureFalling) {
-        return fminf(maxPumpPct, pumpPctToMaintainFlow * 0.5f);
+    if (currentState.pressureChangeSpeed < 0) {
+        return fminf(maxPumpPct, pumpPctToMaintainFlow * 0.2f);
     }
 
     return 0;
@@ -59,10 +64,13 @@ void setPumpPressure(float targetPressure, float flowRestriction, SensorState &c
 }
 
 void setPumpOff(void) {
+  Serial.println("Pump off");
+
     pump.set(0);
 }
 
 void setPumpFullOn(void) {
+    Serial.println("pump full on");
     pump.set(PUMP_RANGE);
 }
 
