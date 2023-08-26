@@ -6,8 +6,6 @@ PSM *_thePSM;
 PSM::PSM(unsigned char sensePin, unsigned char controlPin, unsigned int range, int mode, unsigned char divider, unsigned char interruptMinTimeDiff)
 {
 	_thePSM = this;
-  Serial.println("Pump instantiated");
-	
 
 	pinMode(sensePin, INPUT_PULLUP);
 	PSM::_sensePin = sensePin;
@@ -17,26 +15,12 @@ PSM::PSM(unsigned char sensePin, unsigned char controlPin, unsigned int range, i
 	
 	PSM::_divider = divider > 0 ? divider : 1;
 
-	// uint8_t interruptNum = digitalPinToInterrupt(PSM::_sensePin);
-
-	// if (interruptNum != NOT_AN_INTERRUPT)
-	// {
-	// 	attachInterrupt(digitalPinToInterrupt(interruptNum), onInterrupt, mode);
-	// }
 
 	PSM::_range = range;
 
 	PSM::_interruptMinTimeDiff = interruptMinTimeDiff;
 }
 
-// void init(unsigned char sensePin, int mode) {
-// 	uint8_t interruptNum = digitalPinToInterrupt(sensePin);
-
-// 	if (interruptNum != NOT_AN_INTERRUPT)
-// 	{
-// 		attachInterrupt(digitalPinToInterrupt(interruptNum), PSM::onInterrupt, mode);
-// 	}
-// }
 
 void onPSMInterrupt() __attribute__ ((weak));
 void onPSMInterrupt() {}
@@ -44,7 +28,6 @@ void onPSMInterrupt() {}
 void PSM::init(int mode){
 
 	uint8_t interruptNum = digitalPinToInterrupt(PSM::_sensePin);
-	Serial.println("Attaching interrupt");
 	if (interruptNum != NOT_AN_INTERRUPT)
 	{
 		attachInterrupt(interruptNum, onInterrupt, mode);
@@ -78,12 +61,10 @@ void PSM::set(unsigned int value)
 	if (value < PSM::_range)
 	{
 		PSM::_value = value;
-		Serial.println("value set");
 
 	}
 	else
 	{
-	Serial.println("value unset");
 
 		PSM::_value = PSM::_range;
 	}
