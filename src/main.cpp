@@ -9,9 +9,12 @@
 #include "pump.h"
 #include "peripherals.h"
 #include "scales.h"
+#include "utils.h"
 
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 SimpleKalmanFilter smoothPressure(2.f, 2.f, 0.5f);
+SimpleKalmanFilter smoothScalesFlow(2.f, 2.f, 0.5f);
+
 SensorState currentState;
 BLEServer *pServer = NULL;
 BLECharacteristic *pPressureSensorBLEChar = NULL;
@@ -19,68 +22,31 @@ BLECharacteristic *pWeightBLEChar = NULL;
 BLECharacteristic *pTargetPressureBLEChar = NULL;
 BLECharacteristic *pBrewingBLEChar = NULL;
 BLECharacteristic *pTemperatureBLEChar = NULL;
+BLECharacteristic *pFlowBLEChar = NULL;
+BLECharacteristic *pTargetWeightBLEChar = NULL;
+BLECharacteristic *pTargetTemperatureBLEChar = NULL;
 
-bool isBrewing = false;
 bool tareDone = false;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
-int state = 0;
 int pressureTimer = millis();
 int weightTimer = millis();
 int tempTimer = millis();
 int dataSendTimer = millis();
-int connectedDeviceTime = 0;
 int GET_PRESSURE_READ_EVERY = 100;
 int GET_WEIGHT_READ_EVERY = 200;
-int GET_TEMP_READ_EVERY = 100;
+int GET_TEMP_READ_EVERY = 250;
 int SEND_DATA_EVERY = 250;
-// int rec = 0;
 
 float lastTemp;
 float lastPressure;
 float lastWeight;
+float lastFlow = 0;
 float SCALE_CALIBRATION = 710.73015873f;
 float temperature = -1000;
 float TEMPDIFF = -3;
 float previousSmoothedPressure = 0;
-
-// void toogleBrew()
-// {
-//   isBrewing = !isBrewing;
-// }
-// void BLETransfer(int16_t);
-// #define enviornmentService SERVICE_UUID
-
-// BLECharactistics Setup
-// BLECharacteristic temperatureCharacteristic(
-//     TEMPERATURE_UUID,
-//     BLECharacteristic::PROPERTY_READ |
-//         BLECharacteristic::PROPERTY_NOTIFY);
-
-// BLECharacteristic pressureCharacteristic(
-//     PRESSURE_UUID,
-//     BLECharacteristic::PROPERTY_READ |
-//         BLECharacteristic::PROPERTY_NOTIFY);
-
-// BLECharacteristic weightCharacteristic(
-//     WEIGHT_UUID,
-//     BLECharacteristic::PROPERTY_READ |
-//         BLECharacteristic::PROPERTY_NOTIFY);
-
-// BLECharacteristic brewingCharacteristic(
-//     BREW_UUID,
-//     BLECharacteristic::PROPERTY_READ |
-//         BLECharacteristic::PROPERTY_NOTIFY |
-//         BLECharacteristic::PROPERTY_WRITE |
-//         BLECharacteristic::PROPERTY_INDICATE);
-
-// BLECharacteristic targetPressureCharacteristic(
-//     TARGET_PRESSURE_UUID,
-//     BLECharacteristic::PROPERTY_READ |
-//         BLECharacteristic::PROPERTY_NOTIFY |
-//         BLECharacteristic::PROPERTY_WRITE |
-//         BLECharacteristic::PROPERTY_INDICATE);
 
 // Callbacks Setup
 class MyServerCallbacks : public BLEServerCallbacks
@@ -91,7 +57,6 @@ class MyServerCallbacks : public BLEServerCallbacks
     deviceConnected = true;
     oldDeviceConnected = true;
     delay(500);
-    connectedDeviceTime = millis();
   };
 
   void onDisconnect(BLEServer *pServer)
@@ -99,6 +64,18 @@ class MyServerCallbacks : public BLEServerCallbacks
     deviceConnected = false;
   }
 };
+
+void stopBrew(void)
+{
+  currentState.isBrewing = false;
+  tareDone = false;
+  Serial.println("Stopped brew");
+  setPumpOff();
+  closeValve();
+  currentState.targetWeight = 0;
+  currentState.targetPressure = 0;
+}
+
 
 class BrewBLECharCallbacks : public BLECharacteristicCallbacks
 {
@@ -111,19 +88,29 @@ class BrewBLECharCallbacks : public BLECharacteristicCallbacks
 
     if (intValue == 1 && !currentState.isBrewing)
     {
+      scalesTare();
+      delay(500);
       currentState.isBrewing = true;
       Serial.println("Started brew");
-      scalesTare();
       tareDone = true;
     }
     if (intValue == 0 && currentState.isBrewing)
     {
-      currentState.isBrewing = false;
-
-      Serial.println("Stopped brew");
-      setPumpOff();
-      closeValve();
+      stopBrew();
     }
+  }
+};
+
+class targetWeightBLECharCallbacks : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *pCharacteristic)
+  {
+    uint8_t *value = pCharacteristic->getData();
+    int intValue = value[0];
+    // fValue = fValue / 10;
+    Serial.println("Received BT Target Weight= " + String(intValue));
+
+    currentState.targetWeight = intValue;
   }
 };
 
@@ -132,12 +119,26 @@ class TargetPressureBLECharCallbacks : public BLECharacteristicCallbacks
   void onWrite(BLECharacteristic *pCharacteristic)
   {
     uint8_t *value = pCharacteristic->getData();
-  
-    float fValue =  value[0];
-    fValue = fValue/10;
-    Serial.println("Received BT Target Temperature= " + String(fValue));
+
+    float fValue = value[0];
+    fValue = fValue / 10;
+    Serial.println("Received BT Target Pressure= " + String(fValue));
 
     currentState.targetPressure = fValue;
+  }
+};
+
+class TargetTemperatureBLECharCallbacks : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *pCharacteristic)
+  {
+    uint8_t *value = pCharacteristic->getData();
+
+    float fValue = value[0];
+    fValue = fValue / 10;
+    Serial.println("Received BT Target Temperature= " + String(fValue));
+
+    currentState.targetTemperature = fValue;
   }
 };
 
@@ -167,7 +168,7 @@ static void sensorsReadPressure(void)
   {
     float elapsedTimeSec = elapsedTime / 1000.f;
     previousSmoothedPressure = currentState.smoothedPressure;
-    currentState.pressure = getPressure();
+    currentState.pressure = fmaxf(0.f, getPressure());
     previousSmoothedPressure = currentState.smoothedPressure;
     currentState.smoothedPressure = smoothPressure.updateEstimate(currentState.pressure);
     currentState.pressureChangeSpeed = (currentState.smoothedPressure - previousSmoothedPressure) / elapsedTimeSec;
@@ -180,6 +181,8 @@ void manualFlowControl(void)
 {
   if (currentState.isBrewing)
   {
+    if (!tareDone)
+      scalesTare();
     openValve();
     // float flow_reading = getTargetPressure();
     // if (flow_reading != currentState.targetPressure)
@@ -187,6 +190,18 @@ void manualFlowControl(void)
     //   currentState.targetPressure = flow_reading;
     // }
     setPumpPressure(currentState.targetPressure, 0.f, currentState);
+    if (currentState.targetWeight > 0 && currentState.weight + (currentState.weightFlow / 9) >= currentState.targetWeight)
+    {
+      Serial.println("Stopped at: " + String(currentState.weight) + " target was: " + String(currentState.targetWeight));
+      stopBrew();
+
+      char brew[20];
+      dtostrf(0.f, 1, 0, brew);
+      pBrewingBLEChar->setValue((char *)&brew);
+      pBrewingBLEChar->notify();
+      pTargetWeightBLEChar->setValue((char *)&brew);
+      pTargetWeightBLEChar->notify();
+    }
   }
 }
 
@@ -199,8 +214,8 @@ static void getWeight(void)
     float elapsedTimeSec = elapsedTime / 1000.f;
     float previousWeight = currentState.weight;
     currentState.weight = scalesGetWeight();
-    currentState.weightFlow = (currentState.weight - previousWeight) / elapsedTimeSec;
-
+    currentState.weightFlow = fmaxf(0.f, (currentState.weight - previousWeight) / elapsedTimeSec);
+    currentState.weightFlow = smoothScalesFlow.updateEstimate(currentState.weightFlow);
     weightTimer = millis();
   }
 }
@@ -213,16 +228,130 @@ static void getTemp(void)
   {
     temperature = thermocouple.readCelsius() + TEMPDIFF;
     currentState.temperature = temperature;
-
     tempTimer = millis();
   }
 }
 
-// float getTargetPressure(void)
-// {
-//   uint8_t *received_data = targetPressureCharacteristic.getData();
-//   return received_data[0] / 10;
-// }
+inline static float TEMP_DELTA(float d) { return (d*0.25f); }
+int hpwr = 550;
+int brewDivider = 2;
+bool brewDeltaState = true;
+int mainDivider = 5;
+void justDoCoffee(SensorState &currentState, bool brewActive)
+{
+  int HPWR_LOW = 550 / 5; // hpw/divider
+  static double heaterWave;
+  static bool heaterState;
+  float BREW_TEMP_DELTA;
+  bool preinfusionFinished = brewActive && currentState.targetPressure > 3.0f;
+  // Calculating the boiler heating power range based on the below input values
+  int HPWR_OUT = mapRange(currentState.temperature, currentState.targetTemperature - 10, currentState.targetTemperature, hpwr, HPWR_LOW, 0);
+  HPWR_OUT = constrain(HPWR_OUT, HPWR_LOW, hpwr); // limits range of sensor values to HPWR_LOW and HPWR
+  BREW_TEMP_DELTA = mapRange(currentState.temperature, currentState.targetTemperature, currentState.targetTemperature + TEMP_DELTA(currentState.targetTemperature), TEMP_DELTA(currentState.targetTemperature), 0, 0);
+  BREW_TEMP_DELTA = constrain(BREW_TEMP_DELTA, 0, TEMP_DELTA(currentState.targetTemperature));
+  // lcdTargetState(0); // setting the target mode to "brew temp"
+
+  if (brewActive)
+  {
+    // Applying the HPWR_OUT variable as part of the relay switching logic
+    if (currentState.temperature > currentState.targetTemperature && currentState.temperature < currentState.targetTemperature + 0.25f && !preinfusionFinished)
+    {
+      if (millis() - heaterWave > HPWR_OUT * brewDivider && !heaterState)
+      {
+        setBoilerOff();
+        heaterState = true;
+        heaterWave = millis();
+      }
+      else if (millis() - heaterWave > HPWR_LOW * mainDivider && heaterState)
+      {
+        setBoilerOn();
+        heaterState = false;
+        heaterWave = millis();
+      }
+    }
+    else if (currentState.temperature > currentState.targetTemperature - 1.5f && currentState.temperature < currentState.targetTemperature + (brewDeltaState ? BREW_TEMP_DELTA : 0.f) && preinfusionFinished)
+    {
+      if (millis() - heaterWave > hpwr * brewDivider && !heaterState)
+      {
+        setBoilerOn();
+        heaterState = true;
+        heaterWave = millis();
+      }
+      else if (millis() - heaterWave > hpwr && heaterState)
+      {
+        setBoilerOff();
+        heaterState = false;
+        heaterWave = millis();
+      }
+    }
+    else if (brewDeltaState && currentState.temperature >= (currentState.targetTemperature + BREW_TEMP_DELTA) && currentState.temperature <= (currentState.targetTemperature + BREW_TEMP_DELTA + 2.5f) && preinfusionFinished)
+    {
+      if (millis() - heaterWave > hpwr * mainDivider && !heaterState)
+      {
+        setBoilerOn();
+        heaterState = true;
+        heaterWave = millis();
+      }
+      else if (millis() - heaterWave > hpwr && heaterState)
+      {
+        setBoilerOff();
+        heaterState = false;
+        heaterWave = millis();
+      }
+    }
+    else if (currentState.temperature <= currentState.targetTemperature - 1.5f)
+    {
+      setBoilerOn();
+    }
+    else
+    {
+      setBoilerOff();
+    }
+  }
+  else
+  { // if brewState == 0
+    if (currentState.temperature < ((float)currentState.targetTemperature - 10.00f))
+    {
+      setBoilerOn();
+    }
+    else if (currentState.temperature >= ((float)currentState.targetTemperature - 10.f) && currentState.temperature < ((float)currentState.targetTemperature - 5.f))
+    {
+      if (millis() - heaterWave > HPWR_OUT && !heaterState)
+      {
+        setBoilerOn();
+        heaterState = true;
+        heaterWave = millis();
+      }
+      else if (millis() - heaterWave > HPWR_OUT / brewDivider && heaterState)
+      {
+        setBoilerOff();
+        heaterState = false;
+        heaterWave = millis();
+      }
+    }
+    else if ((currentState.temperature >= ((float)currentState.targetTemperature - 5.f)) && (currentState.temperature <= ((float)currentState.targetTemperature - 0.25f)))
+    {
+      if (millis() - heaterWave > HPWR_OUT * brewDivider && !heaterState)
+      {
+        setBoilerOn();
+        heaterState = !heaterState;
+        heaterWave = millis();
+      }
+      else if (millis() - heaterWave > HPWR_OUT / brewDivider && heaterState)
+      {
+        setBoilerOff();
+        heaterState = !heaterState;
+        heaterWave = millis();
+      }
+    }
+    else
+    {
+      setBoilerOff();
+    }
+  }
+}
+
+
 
 void setup()
 {
@@ -261,71 +390,69 @@ void setup()
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_NOTIFY);
   Serial.println("BLE Pressure Sensor Characteristic Created");
-pPressureSensorBLEChar->addDescriptor(new BLE2902());
+  pPressureSensorBLEChar->addDescriptor(new BLE2902());
 
-pTemperatureBLEChar = pService->createCharacteristic(
+  pFlowBLEChar = pService->createCharacteristic(
+      FLOW_UUID,
+      BLECharacteristic::PROPERTY_READ |
+          BLECharacteristic::PROPERTY_NOTIFY);
+  Serial.println("BLE Flow Characteristic Created");
+  pFlowBLEChar->addDescriptor(new BLE2902());
+
+  pTemperatureBLEChar = pService->createCharacteristic(
       TEMPERATURE_UUID,
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_NOTIFY);
   Serial.println("BLE Temperature Characteristic Created");
   pTemperatureBLEChar->addDescriptor(new BLE2902());
 
-pWeightBLEChar = pService->createCharacteristic(
+  pWeightBLEChar = pService->createCharacteristic(
       WEIGHT_UUID,
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_NOTIFY);
   Serial.println("BLE Weight Characteristic Created");
-pWeightBLEChar->addDescriptor(new BLE2902());
+  pWeightBLEChar->addDescriptor(new BLE2902());
 
   pTargetPressureBLEChar = pService->createCharacteristic(
       TARGET_PRESSURE_UUID,
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_WRITE |
           BLECharacteristic::PROPERTY_NOTIFY);
-          // BLECharacteristic::PROPERTY_INDICATE);
+  // BLECharacteristic::PROPERTY_INDICATE);
   Serial.println("BLE Pressure Target Characteristic Created");
-pTargetPressureBLEChar->addDescriptor(new BLE2902());
+  pTargetPressureBLEChar->addDescriptor(new BLE2902());
+
+  pTargetWeightBLEChar = pService->createCharacteristic(
+      TARGET_WEIGHT_UUID,
+      BLECharacteristic::PROPERTY_READ |
+          BLECharacteristic::PROPERTY_WRITE |
+          BLECharacteristic::PROPERTY_NOTIFY);
+  // BLECharacteristic::PROPERTY_INDICATE);
+  Serial.println("BLE Pressure Target Weight Created");
+  pTargetWeightBLEChar->addDescriptor(new BLE2902());
+
+  pTargetTemperatureBLEChar = pService->createCharacteristic(
+      TARGET_TEMPERATURE_UUID,
+      BLECharacteristic::PROPERTY_READ |
+          BLECharacteristic::PROPERTY_WRITE |
+          BLECharacteristic::PROPERTY_NOTIFY);
+  // BLECharacteristic::PROPERTY_INDICATE);
+  Serial.println("BLE Pressure Target Temperature Created");
+  pTargetTemperatureBLEChar->addDescriptor(new BLE2902());
 
   pBrewingBLEChar = pService->createCharacteristic(
       BREW_UUID,
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_WRITE |
           BLECharacteristic::PROPERTY_NOTIFY);
-          // BLECharacteristic::PROPERTY_INDICATE);
+  // BLECharacteristic::PROPERTY_INDICATE);
   Serial.println("BLE Brewing Characteristic Created");
   pBrewingBLEChar->addDescriptor(new BLE2902());
-  // pPressureSensorBLEChar->addDescriptor(new BLE2902());
 
-  // Create a BLE Characteristic
-  // pService->addCharacteristic(&temperatureCharacteristic);
-  // pService->addCharacteristic(&weightCharacteristic);
-  // pService->addCharacteristic(&pressureCharacteristic);
-  // pService->addCharacteristic(&brewingCharacteristic);
-  // pService->addCharacteristic(&targetPressureCharacteristic);
-
-  // Create a BLE Descriptor
-  BLEDescriptor TemperatureDescriptor(BLEUUID((uint16_t)0x290Cu));
-  TemperatureDescriptor.setValue("Temperature -40-60°C");
-  // pTemperatureBLEChar->addDescriptor(&TemperatureDescriptor);
-
-  BLEDescriptor PressureDescriptor(BLEUUID((uint16_t)0x290Cu));
-  PressureDescriptor.setValue("Pressure in bar");
-  // pPressureSensorBLEChar->addDescriptor(&PressureDescriptor);
-
-  BLEDescriptor WeightDescriptor(BLEUUID((uint16_t)0x290Cu));
-  WeightDescriptor.setValue("Weight in g*10");
-  // pWeightBLEChar->addDescriptor(&WeightDescriptor);
-
-  BLEDescriptor BrewingDescriptor(BLEUUID((uint16_t)0x290Au));
-  BrewingDescriptor.setValue("If is brewing or not");
-  // pBrewingBLEChar->addDescriptor(&BrewingDescriptor);
   pBrewingBLEChar->setCallbacks(new BrewBLECharCallbacks());
-
-  BLEDescriptor TargetPressureDescriptor(BLEUUID((uint16_t)0x290Au));
-  TargetPressureDescriptor.setValue("Pressure we want to reach");
-  // pTargetPressureBLEChar->addDescriptor(&TargetPressureDescriptor);
   pTargetPressureBLEChar->setCallbacks(new TargetPressureBLECharCallbacks());
-
+  pTargetWeightBLEChar->setCallbacks(new targetWeightBLECharCallbacks());
+  pTargetTemperatureBLEChar->setCallbacks(new TargetTemperatureBLECharCallbacks());
 
   pService->start();
 
@@ -338,7 +465,6 @@ pTargetPressureBLEChar->addDescriptor(new BLE2902());
 
   // Start advertising
   BLEDevice::startAdvertising();
-
   Serial.println("Waiting a client connection to notify...");
 }
 
@@ -348,13 +474,11 @@ void loop()
   checkToReconnect();
   getWeight();
   getTemp();
-  getAndResetClickCounter();
+  // getAndResetClickCounter();
 
-  // if (deviceConnected && millis() - connectedDeviceTime > 1000 && millis() - connectedDeviceTime < 2000)
-  if(deviceConnected)
+  if (deviceConnected)
   {
     uint32_t elapsedTime = millis() - dataSendTimer;
-    // delay(50);
     if (elapsedTime > SEND_DATA_EVERY)
     {
       if (currentState.temperature != lastTemp)
@@ -364,7 +488,6 @@ void loop()
         pTemperatureBLEChar->setValue((char *)&TempBuffer);
         pTemperatureBLEChar->notify();
         lastTemp = currentState.temperature;
-        // delay(50);
       }
 
       if (currentState.smoothedPressure != lastPressure)
@@ -374,7 +497,6 @@ void loop()
         pPressureSensorBLEChar->setValue((char *)&pressureBuffer);
         pPressureSensorBLEChar->notify();
         lastPressure = currentState.smoothedPressure;
-        // delay(50);
       }
       if (currentState.weight != lastWeight)
       {
@@ -383,7 +505,18 @@ void loop()
         pWeightBLEChar->setValue((char *)&buffer2);
         pWeightBLEChar->notify();
         lastWeight = currentState.weight;
-        // delay(50);
+      }
+      if (currentState.weightFlow != lastFlow)
+      {
+        char buffer3[20];
+        dtostrf(currentState.weightFlow * 100, 1, 0, buffer3);
+        pFlowBLEChar->setValue((char *)&buffer3);
+        pFlowBLEChar->notify();
+        lastFlow = currentState.weightFlow;
+      }
+      if (currentState.isBrewing)
+      {
+        Serial.println("Pressure: " + String(currentState.pressure) + "Weight: " + String(currentState.weight) + "TargetPressure: " + String(currentState.targetPressure));
       }
 
       dataSendTimer = millis();
@@ -391,86 +524,10 @@ void loop()
     // uint8_t *received_data = brewingCharacteristic.getData();
 
     manualFlowControl();
+    justDoCoffee(currentState, currentState.isBrewing);
   }
 }
 
-// void justDoCoffee(SensorState &currentState, bool brewActive) {
-//   int HPWR_LOW = 550 / 5; // hpw/divider
-//   static double heaterWave;
-//   static bool heaterState;
-//   float BREW_TEMP_DELTA;
-// Calculating the boiler heating power range based on the below input values
-// int HPWR_OUT = mapRange(currentState.temperature, runningCfg.setpoint - 10, runningCfg.setpoint, runningCfg.hpwr, HPWR_LOW, 0);
-// HPWR_OUT = constrain(HPWR_OUT, HPWR_LOW, runningCfg.hpwr);  // limits range of sensor values to HPWR_LOW and HPWR
-// BREW_TEMP_DELTA = mapRange(currentState.temperature, runningCfg.setpoint, runningCfg.setpoint + TEMP_DELTA(runningCfg.setpoint), TEMP_DELTA(runningCfg.setpoint), 0, 0);
-// BREW_TEMP_DELTA = constrain(BREW_TEMP_DELTA, 0, TEMP_DELTA(runningCfg.setpoint));
-// lcdTargetState(0); // setting the target mode to "brew temp"
-
-// if (brewActive) {
-// Applying the HPWR_OUT variable as part of the relay switching logic
-// if (currentState.temperature > runningCfg.setpoint && currentState.temperature < runningCfg.setpoint + 0.25f && !preinfusionFinished ) {
-//   if (millis() - heaterWave > HPWR_OUT * runningCfg.brewDivider && !heaterState ) {
-//     setBoilerOff();
-//     heaterState=true;
-//     heaterWave=millis();
-//   } else if (millis() - heaterWave > HPWR_LOW * runningCfg.mainDivider && heaterState ) {
-//     setBoilerOn();
-//     heaterState=false;
-//     heaterWave=millis();
-//   }
-// } else if (currentState.temperature > runningCfg.setpoint - 1.5f && currentState.temperature < runningCfg.setpoint + (runningCfg.brewDeltaState ? BREW_TEMP_DELTA : 0.f) && preinfusionFinished ) {
-//   if (millis() - heaterWave > runningCfg.hpwr * runningCfg.brewDivider && !heaterState ) {
-//     setBoilerOn();
-//     heaterState=true;
-//     heaterWave=millis();
-//   } else if (millis() - heaterWave > runningCfg.hpwr && heaterState ) {
-//     setBoilerOff();
-//     heaterState=false;
-//     heaterWave=millis();
-//   }
-// } else if (runningCfg.brewDeltaState && currentState.temperature >= (runningCfg.setpoint + BREW_TEMP_DELTA) && currentState.temperature <= (runningCfg.setpoint + BREW_TEMP_DELTA + 2.5f)  && preinfusionFinished ) {
-//   if (millis() - heaterWave > runningCfg.hpwr * runningCfg.mainDivider && !heaterState ) {
-//     setBoilerOn();
-//     heaterState=true;
-//     heaterWave=millis();
-//   } else if (millis() - heaterWave > runningCfg.hpwr && heaterState ) {
-//     setBoilerOff();
-//     heaterState=false;
-//     heaterWave=millis();
-//   }
-// } else if(currentState.temperature <= runningCfg.setpoint - 1.5f) {
-//   setBoilerOn();
-// } else {
-//   setBoilerOff();
-// }
-// // } else { //if brewState == 0
-// //   if (currentState.temperature < ((float)runningCfg.setpoint - 10.00f)) {
-// //     setBoilerOn();
-// //   } else if (currentState.temperature >= ((float)runningCfg.setpoint - 10.f) && currentState.temperature < ((float)runningCfg.setpoint - 5.f)) {
-// //     if (millis() - heaterWave > HPWR_OUT && !heaterState) {
-// //       setBoilerOn();
-// //       heaterState=true;
-// //       heaterWave=millis();
-// //     } else if (millis() - heaterWave > HPWR_OUT / runningCfg.brewDivider && heaterState ) {
-// //       setBoilerOff();
-// //       heaterState=false;
-// //       heaterWave=millis();
-// //     }
-// //   } else if ((currentState.temperature >= ((float)runningCfg.setpoint - 5.f)) && (currentState.temperature <= ((float)runningCfg.setpoint - 0.25f))) {
-// //     if (millis() - heaterWave > HPWR_OUT * runningCfg.brewDivider && !heaterState) {
-// //       setBoilerOn();
-// //       heaterState=!heaterState;
-// //       heaterWave=millis();
-// //     } else if (millis() - heaterWave > HPWR_OUT / runningCfg.brewDivider && heaterState ) {
-// //       setBoilerOff();
-// //       heaterState=!heaterState;
-// //       heaterWave=millis();
-// //     }
-// //   } else {
-// //     setBoilerOff();
-// //   }
-// }
-// }
 
 // static void fillBoiler(float targetBoilerFullPressure) {
 //   static long elapsedTimeSinceStart = millis();

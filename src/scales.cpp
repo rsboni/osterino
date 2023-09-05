@@ -23,7 +23,7 @@ void scalesInit(float scalesF1) {
 
 void scalesTare(void) {
     if (LoadCell_1.wait_ready_timeout(100, 20)) {
-      LoadCell_1.tare(2);
+      LoadCell_1.tare();
       // LoadCell_2.tare(2);
     }
 }
@@ -31,7 +31,7 @@ void scalesTare(void) {
 float scalesGetWeight(void) {
   float currentWeight = 0.f;
     if (LoadCell_1.wait_ready_timeout(100, 20)) {
-      currentWeight = LoadCell_1.get_units(3);
+      currentWeight = LoadCell_1.get_units();
     }
   return currentWeight;
 }
